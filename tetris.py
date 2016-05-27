@@ -14,8 +14,11 @@ last edited: May 2015
 """
 
 import sys
+import os
 import random
 from collections import namedtuple
+from operator import itemgetter
+import json
 from PySide import QtCore
 from PySide import QtGui
 
@@ -36,7 +39,7 @@ TETROMINOES = Tetrominoes(0, 1, 2, 3, 4, 5, 6, 7)
 
 class Communicate(QtCore.QObject):
 
-    msgToSB = QtCore.Signal(str)
+    msgToSB = QtCore.Signal(tuple)
 
 
 class Tetris(QtGui.QMainWindow):
@@ -45,15 +48,23 @@ class Tetris(QtGui.QMainWindow):
         super(Tetris, self).__init__()
 
         self.setGeometry(300, 300, 180, 380)
+        self.setFixedSize(180, 380)
         self.setWindowTitle('Tetris')
-        self.Tetrisboard = Board(self)
+        self.tetrisboard = Board(self)
+        self.setCentralWidget(self.tetrisboard)
+        # size_policy = QtGui.QSizePolicy(
+        #     QtGui.QSizePolicy.Fixed,
+        #     QtGui.QSizePolicy.Fixed,
+        #     )
+        # self.setSizePolicy(size_policy)
 
-        self.setCentralWidget(self.Tetrisboard)
+        self.user = os.environ.get('USER', 'Anonymous')
 
         self.statusbar = self.statusBar()
-        self.Tetrisboard.c.msgToSB[str].connect(self.statusbar.showMessage)
+        # self.tetrisboard.c.msgToSB[str].connect(self.statusbar.showMessage)
+        self.tetrisboard.c.msgToSB[tuple].connect(self.show_message)
 
-        self.Tetrisboard.start()
+        self.tetrisboard.start()
         self.center()
 
     def center(self):
@@ -62,6 +73,37 @@ class Tetris(QtGui.QMainWindow):
         size =  self.geometry()
         self.move((screen.width() - size.width()) / 2,
                   (screen.height() - size.height()) / 2)
+
+    def show_message(self, status):
+        # message = '{0} - {1}'.format(message, self.user)
+        score, message = status
+        if 'game over' in message.lower():
+            highscores = []
+            new_highscore = [score, self.user]
+            highscore_dir = os.path.dirname(__file__)
+            highscore_file = os.path.join(highscore_dir, 'highscore.json')
+            # Read highscore
+            if os.path.isfile(highscore_file):
+                with open(highscore_file, 'r') as f:
+                    highscores = json.load(f)
+            # Append new highscore
+            min_highscore = min([s[0] for s in highscores])
+            if new_highscore[0] > min_highscore or len(highscores) < 10:
+                highscores.append(new_highscore)
+                highscores.sort(key=itemgetter(0), reverse=True)
+                highscores = highscores[:10]
+                # Write highscore
+                with open(highscore_file, 'w+') as f:
+                    json.dump(highscores, f)
+                message = 'NEW HIGHSCORE!'
+            highscore_dialog = HighscoreDialog(self)
+            highscore_dialog.show_highscores(highscores)
+            highscore_dialog.show()
+        if message:
+            status = '{score} - {message}'.format(score=score, message=message)
+        else:
+            status = str(score)
+        self.statusbar.showMessage(status)
 
 
 class Board(QtGui.QFrame):
@@ -116,7 +158,8 @@ class Board(QtGui.QFrame):
         self.numLinesRemoved = 0
         self.clearBoard()
 
-        self.c.msgToSB.emit(str(self.numLinesRemoved))
+        # self.c.msgToSB.emit(str(self.numLinesRemoved))
+        self.c.msgToSB.emit((self.numLinesRemoved, ''))
 
         self.newPiece()
         self.timer.start(Board.speed, self)
@@ -130,10 +173,10 @@ class Board(QtGui.QFrame):
 
         if self.isPaused:
             self.timer.stop()
-            self.c.msgToSB.emit("paused")
+            self.c.msgToSB.emit((self.numLinesRemoved, 'Paused'))
         else:
             self.timer.start(Board.speed, self)
-            self.c.msgToSB.emit(str(self.numLinesRemoved))
+            self.c.msgToSB.emit((self.numLinesRemoved, ''))
 
         self.update()
 
@@ -256,8 +299,9 @@ class Board(QtGui.QFrame):
 
         if numFullLines > 0:
             self.numLinesRemoved = self.numLinesRemoved + numFullLines
-            print(self.numLinesRemoved)
-            self.c.msgToSB.emit(str(self.numLinesRemoved))
+            # print(self.numLinesRemoved)
+            # self.c.msgToSB.emit(str(self.numLinesRemoved))
+            self.c.msgToSB.emit((self.numLinesRemoved, ''))
             self.isWaitingAfterLine = True
             self.curPiece.setShape(TETROMINOES.no_shape)
             self.update()
@@ -273,7 +317,8 @@ class Board(QtGui.QFrame):
             self.curPiece.setShape(TETROMINOES.no_shape)
             self.timer.stop()
             self.isStarted = False
-            self.c.msgToSB.emit("Game over")
+            # message = '{0} - Game over'.format(self.numLinesRemoved)
+            self.c.msgToSB.emit((self.numLinesRemoved, 'Game over'))
 
     def tryMove(self, newPiece, newX, newY):
 
@@ -418,6 +463,29 @@ class Shape(object):
             result.setY(i, self.x(i))
 
         return result
+
+
+class HighscoreDialog(QtGui.QDialog):
+    def __init__(self, parent):
+        super(HighscoreDialog, self).__init__(parent=parent)
+        # size_policy = QtGui.QSizePolicy(
+        #     QtGui.QSizePolicy.Fixed,
+        #     QtGui.QSizePolicy.Fixed,
+        #     )
+        # self.setSizePolicy(size_policy)
+        self.setModal(True)
+        self.layout = QtGui.QVBoxLayout()
+        self.setLayout(self.layout)
+        highscore_title = QtGui.QLabel('HIGHSCORES', self)
+        self.layout.addWidget(highscore_title)
+        self.layout.setSizeConstraint(QtGui.QLayout.SetFixedSize)
+
+    def show_highscores(self, highscores):
+        for highscore in highscores:
+            score_text = '{0} - {1}'.format(highscore[0], highscore[1])
+            score_label = QtGui.QLabel(score_text, self)
+            self.layout.addWidget(score_label)
+
 
 def main():
 
